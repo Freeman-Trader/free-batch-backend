@@ -3,11 +3,14 @@ import time
 import json
 import signal
 import socket
-import sqlite3
 import pika
 import logging
+import mysql.connector
+from dotenv import load_dotenv
 
-os.mkdir('logs')
+load_dotenv()
+
+os.makedirs('logs', exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,7 +22,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DATABASE = os.getenv('DB_PATH', 'jobs.db')
+DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_PORT = int(os.getenv('DB_PORT', 3306))
+DB_USER = os.getenv('DB_USER', 'root')
+DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+DB_NAME = os.getenv('DB_NAME', 'jobs')
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 RABBITMQ_QUEUE = os.getenv('RABBITMQ_QUEUE', 'job_queue')
 RUN_ONCE = os.getenv('RUN_ONCE', 'false').lower() == 'true'
@@ -40,15 +47,22 @@ signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
 def get_db_connection():
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
+    conn = mysql.connector.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME
+    )
     return conn
 
 def update_job_status(job_id, status):
     try:
         conn = get_db_connection()
-        conn.execute('UPDATE jobs SET status = ? WHERE id = ?', (status, job_id))
+        cursor = conn.cursor()
+        cursor.execute('UPDATE jobs SET status = %s WHERE id = %s', (status, job_id))
         conn.commit()
+        cursor.close()
         conn.close()
         logger.info(f"Job {job_id}: status updated to '{status}'")
     except Exception as e:
@@ -103,7 +117,7 @@ def process_job(ch, method, body):
 
 def main():
     logger.info(f"Starting worker on {HOST_ID}")
-    logger.info(f"DB_PATH={DATABASE}, RABBITMQ_HOST={RABBITMQ_HOST}, QUEUE={RABBITMQ_QUEUE}, RUN_ONCE={RUN_ONCE}")
+    logger.info(f"DB={DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}, RABBITMQ_HOST={RABBITMQ_HOST}, QUEUE={RABBITMQ_QUEUE}, RUN_ONCE={RUN_ONCE}")
 
     while not shutdown_flag:
         try:
